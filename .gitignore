@@ -1,0 +1,30 @@
+# Build output
+src-tauri/target/
+node_modules/
+dist/
+out/
+
+# Never commit audio, models, or real meeting transcripts (PRD §14).
+*.wav
+*.mp3
+*.m4a
+*.opus
+*.onnx
+*.tar.bz2
+models/
+!src-tauri/src/models/
+transcripts/
+recordings/
+# tests/fixtures holds only public-domain or self-recorded clips, added deliberately with -f.
+
+.DS_Store
+*.log
+.env
+.env.*
+
+# Local benchmark recordings and transcripts (never commit)
+recordingd and transcripts/
+
+# Frontend build output
+dist/
+src-tauri/gen/

@@ -1,0 +1,4 @@
+# sherpa-onnx ships Windows libraries built with the static C runtime (/MT), so the Rust side
+# must use it too or linking fails with a runtime-library mismatch.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

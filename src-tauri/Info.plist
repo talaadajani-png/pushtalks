@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>PushTalks uses the microphone while you dictate or record a meeting. Audio is transcribed on this computer and never uploaded.</string>
+  <key>NSCalendarsFullAccessUsageDescription</key>
+  <string>PushTalks reads the name of the meeting happening now to title your transcript. Your calendar stays on this computer.</string>
+  <key>NSCalendarsUsageDescription</key>
+  <string>PushTalks reads the name of the meeting happening now to title your transcript. Your calendar stays on this computer.</string>
+  <key>NSScreenCaptureUsageDescription</key>
+  <string>PushTalks uses Screen &amp; System Audio Recording only to capture call audio during meeting recording, never your screen.</string>
+</dict>
+</plist>
