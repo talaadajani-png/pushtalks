@@ -64,7 +64,12 @@ pub fn start(
         None
     } else {
         Some(audio::start_system().map_err(|e| {
-            anyhow!("System audio isn't available ({e}). Allow Screen Recording for PushTalks, or record the mic only.")
+            let fix = if cfg!(target_os = "macos") {
+                "Allow Screen & System Audio Recording for PushTalks in System Settings"
+            } else {
+                "Check that your speakers or headset are connected and selected as the default output in Windows sound settings"
+            };
+            anyhow!("Computer audio isn't available ({e}). {fix}, or record the mic only.")
         })?)
     };
     let mic_capture = mic::start(state.settings.lock().mic.clone())?;

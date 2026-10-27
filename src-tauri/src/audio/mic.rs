@@ -34,11 +34,13 @@ fn find(preferred: Option<&str>) -> Result<Device> {
         .ok_or_else(|| anyhow!("no microphone found"))
 }
 
-/// Builds a cpal input stream on `device` that sends mono f32 samples to `tx`.
-pub(crate) fn open_stream(device: &Device, tx: RawSender) -> Result<(cpal::Stream, u32)> {
-    let supported = device
-        .default_input_config()
-        .context("reading the audio device's format")?;
+/// Builds a cpal input stream on `device` in the given format, sending mono f32 samples to
+/// `tx`. For a Windows output device this records what it plays (WASAPI loopback).
+pub(crate) fn open_stream(
+    device: &Device,
+    supported: cpal::SupportedStreamConfig,
+    tx: RawSender,
+) -> Result<(cpal::Stream, u32)> {
     let channels = supported.channels() as usize;
     let rate = supported.sample_rate();
     let format = supported.sample_format();
@@ -94,7 +96,10 @@ pub fn start(preferred: Option<String>) -> Result<Capture> {
     Capture::spawn("mic", move |tx| {
         let device = find(preferred.as_deref())?;
         let label = name(&device);
-        let (stream, rate) = open_stream(&device, tx)?;
+        let format = device
+            .default_input_config()
+            .context("reading the microphone's format")?;
+        let (stream, rate) = open_stream(&device, format, tx)?;
         Ok((stream, rate, label))
     })
 }

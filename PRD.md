@@ -627,6 +627,11 @@ The full desktop app (Phases 1 to 3 scope) is built as a **draft for review**. N
 - Everything on Windows: the code compiles only on macOS so far. The Windows hotkey, loopback and paste code is written but untested.
 - macOS permission flows on a fresh machine. The dev build is unsigned, so each rebuild may need permissions granted again.
 
+**Windows build (2026-10-27):**
+- GitHub Actions (private repo) builds PushTalks on Windows and produces an `.exe` installer (per-user, no admin rights) and an `.msi` installer.
+- The first real Windows compile passed: all Rust tests (including the no-network guard), clippy and the frontend tests.
+- **Not yet run on a Windows PC.** The hold-to-talk key, system audio (WASAPI loopback), paste, call detection and permissions are untested.
+
 **Automatic meeting titles (2026-10-23):**
 - **At recording start (and again at Stop, if still unnamed):** PushTalks takes the title from the meeting window or, failing that, the Mac calendar event happening now. A typed title always wins.
   - Teams meeting windows are used; Teams navigation windows ("Chat | …", "Calendar | …") are ignored.

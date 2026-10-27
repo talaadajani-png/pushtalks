@@ -111,6 +111,20 @@ struct Track {
     writer: JoinHandle<Result<()>>,
 }
 
+/// Samples of silence to write so a track keeps pace with the clock. Windows sends nothing for
+/// the speakers while nothing plays, which would shorten the track and shift every later
+/// timestamp. Only gaps over a second are filled, and only up to 0.25 s behind the clock, so
+/// normal buffering never adds silence.
+pub fn silence_to_insert(written: usize, elapsed_secs: f64) -> usize {
+    let rate = SAMPLE_RATE as f64;
+    let expected = (elapsed_secs * rate) as usize;
+    if expected > written + SAMPLE_RATE as usize {
+        expected - written - (0.25 * rate) as usize
+    } else {
+        0
+    }
+}
+
 fn spawn_writer(capture: &Capture, path: PathBuf) -> Result<JoinHandle<Result<()>>> {
     let spec = hound::WavSpec {
         channels: 1,
@@ -124,11 +138,23 @@ fn spawn_writer(capture: &Capture, path: PathBuf) -> Result<JoinHandle<Result<()
     Ok(std::thread::Builder::new()
         .name("wav-writer".into())
         .spawn(move || {
+            let started = Instant::now();
             let mut last_flush = Instant::now();
-            // Ends when the capture stops and its channel closes.
-            for chunk in rx.iter() {
-                for s in chunk {
+            let mut written = 0usize;
+            loop {
+                let chunk = match rx.recv_timeout(Duration::from_millis(250)) {
+                    Ok(c) => Some(c),
+                    Err(crossbeam_channel::RecvTimeoutError::Timeout) => None,
+                    // Ends when the capture stops and its channel closes.
+                    Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
+                };
+                for _ in 0..silence_to_insert(written, started.elapsed().as_secs_f64()) {
+                    wav.write_sample(0i16)?;
+                    written += 1;
+                }
+                for s in chunk.unwrap_or_default() {
                     wav.write_sample((s.clamp(-1.0, 1.0) * 32767.0) as i16)?;
+                    written += 1;
                 }
                 if last_flush.elapsed() >= FLUSH_EVERY {
                     wav.flush()?;
@@ -235,6 +261,17 @@ impl Recorder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fills_only_real_gaps_with_silence() {
+        let r = SAMPLE_RATE as usize;
+        assert_eq!(silence_to_insert(10 * r, 10.5), 0, "normal buffering");
+        assert_eq!(
+            silence_to_insert(5 * r, 10.0),
+            5 * r - r / 4,
+            "five silent seconds"
+        );
+    }
 
     #[test]
     fn repairs_a_wav_that_was_never_finalized() {
