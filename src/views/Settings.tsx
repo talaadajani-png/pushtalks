@@ -295,8 +295,27 @@ function Claude() {
           In Claude Desktop: Settings › Developer › Edit Config, add this to claude_desktop_config.json, then restart Claude.
         </span>
       </div>
+      <div className="stack">
+        <div className="row">
+          <b className="small">Automatic minutes prompt</b>
+          <span className="spacer" />
+          <button onClick={() => copy('prompt', c.auto_minutes_prompt)}>{copied === 'prompt' ? 'Copied' : 'Copy prompt'}</button>
+        </div>
+        <span className="faint">
+          Paste it into Claude Code after adding the connector. Every 30 minutes Claude checks for meetings without
+          minutes and writes full minutes for each: summary, attendees, discussion, decisions, action items, risks, open
+          questions, next steps and anything to double-check. It runs while that Claude Code window stays open.
+        </span>
+        <textarea
+          className="small"
+          readOnly
+          rows={8}
+          value={c.auto_minutes_prompt}
+          style={{ width: '100%', resize: 'vertical', fontFamily: 'inherit' }}
+        />
+      </div>
       <p className="small">
-        Then ask Claude: “Write minutes for my latest PushTalks meeting.”
+        Or ask Claude once: “Write minutes for my latest PushTalks meeting.”
       </p>
     </section>
   );

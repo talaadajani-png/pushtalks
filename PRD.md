@@ -632,6 +632,35 @@ The full desktop app (Phases 1 to 3 scope) is built as a **draft for review**. N
 - The first real Windows compile passed: all Rust tests (including the no-network guard), clippy and the frontend tests.
 - **Not yet run on a Windows PC.** The hold-to-talk key, system audio (WASAPI loopback), paste, call detection and permissions are untested.
 
+**Processing speed fix (2026-10-27, v0.1.1):**
+- **Problem:** a tester reported that a 45-minute meeting took hours to process on Windows.
+- **Cause:** processing ran at lowered priority. On macOS that is "background" priority, which can move work onto the slow efficiency cores. The same 29-minute recording took 268 s at normal priority, and was still unfinished after 600 s at background priority. Nothing stopped Windows efficiency mode, macOS App Nap, or the computer sleeping while the window was hidden.
+- **Fix:** while a meeting processes, PushTalks:
+  - runs at normal priority;
+  - opts out of Windows efficiency mode (EcoQoS) and macOS App Nap;
+  - keeps the computer from idle sleep.
+- **Threads:** one inference thread per physical core, up to 8. Intel/AMD hyper-threads are no longer counted twice.
+- **Measured (Mac, 10 cores):** 29.4 min of meeting with two tracks and diarization took 268 s (RTF 0.15). Diarization was 101 s of that.
+- **Windows baseline (old build, 0.1.0):** about 12 hours for a 45-minute meeting on a 2022 Lenovo V14 G3: i7-1255U with 2 performance cores and 8 efficiency cores, 16 GB RAM, Windows 11 Pro. That is RTF about 16, roughly 100 times slower than the Mac.
+- **Not yet measured on Windows with v0.1.1.** Each processed meeting now appends one line of stage durations (no content) to `processing-times.log` in the app data folder (`%APPDATA%\PushTalks` on Windows). That line is the number to record here.
+- **Version:** builds now carry their own version number (0.1.1), so Windows installs them as updates.
+
+**Speaker count fix (2026-10-28):**
+- **Problem:** a tester's call with about 8 people came out with 57 speakers.
+- **Cause:** the clustering step splits one person into many fragments. On a kept 29-minute call it found 109 clusters, of which 3 spoke for 30 s or more. Raising the clustering threshold alone wasn't enough: 0.9 still gave 31.
+- **Fix:** clusters with 20 s or more of speech count as main speakers. Each smaller fragment:
+  - joins the main speaker whose voiceprint it matches best (cosine 0.35 or more);
+  - otherwise keeps its own label if it has 8 s or more of speech (someone who spoke briefly);
+  - otherwise joins the nearest main speaker in time.
+- **Measured:** the same call now gives 6 speakers. The true number of people on that call is not yet confirmed. Folding adds under 1 s to processing.
+- **Not verified:** the thresholds were tuned on one call, so check them against more meetings with known attendee counts.
+
+**Automatic minutes prompt (2026-10-28):**
+- Settings > Use with Claude now offers a copyable prompt for Claude Code. It starts with `/loop 30m`, so every 30 minutes Claude checks for meetings without minutes and writes them.
+- The check is cheap: `list_meetings` takes `only_without_minutes`, and no transcript is read when nothing is new.
+- **Fuller minutes format** (also used by the one-off `meeting_minutes` prompt): Summary, Attendees, Discussion by topic, Decisions, Action items table, Risks and blockers, Open questions, Next steps, Needs checking.
+- **Limits:** it runs only while that Claude Code session stays open. Sending transcripts to Claude is cloud AI use and needs the supervisor's approval for client meetings (§17).
+
 **Automatic meeting titles (2026-10-23):**
 - **At recording start (and again at Stop, if still unnamed):** PushTalks takes the title from the meeting window or, failing that, the Mac calendar event happening now. A typed title always wins.
   - Teams meeting windows are used; Teams navigation windows ("Chat | …", "Calendar | …") are ignored.

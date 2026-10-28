@@ -667,6 +667,8 @@ struct Connector {
     installed: bool,
     claude_code: String,
     claude_desktop: String,
+    /// Pasted into Claude Code: writes minutes for new meetings every 30 minutes.
+    auto_minutes_prompt: String,
 }
 
 /// Where the Claude connector (`pushtalks-mcp`) lives and how to add it to Claude.
@@ -685,6 +687,7 @@ fn claude_connector() -> Res<Connector> {
         installed: path.exists(),
         claude_code: format!("claude mcp add --scope user pushtalks -- \"{shown}\""),
         claude_desktop: serde_json::to_string_pretty(&desktop).map_err(err)?,
+        auto_minutes_prompt: crate::mcp::auto_minutes_prompt(),
         path,
     })
 }

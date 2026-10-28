@@ -78,7 +78,13 @@ export interface Tick {
   mic_only: boolean;
 }
 export interface Progress { id: string; title: string; fraction: number; eta_secs: number | null }
-export interface Connector { path: string; installed: boolean; claude_code: string; claude_desktop: string }
+export interface Connector {
+  path: string;
+  installed: boolean;
+  claude_code: string;
+  claude_desktop: string;
+  auto_minutes_prompt: string;
+}
 export interface MicResult { device: string; peak: number; speech: boolean; blocked: boolean }
 export interface Voice { id: number; name: string; samples: number }
 export interface AppInfo { version: string; os: string; notices: string; models_dir: string }

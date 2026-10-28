@@ -1,6 +1,6 @@
 [package]
 name = "pushtalks"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "PushTalks: local-first dictation and meeting transcription for PUSH Media"
 publish = false
@@ -67,13 +67,14 @@ windows-sys = { version = "0.60", features = [
   "Win32_Foundation",
   "Win32_System_ProcessStatus",
   "Win32_System_Threading",
+  "Win32_System_Power",
 ] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # Calendar lookup for meeting titles (EventKit), local only.
 objc2 = "=0.6.5"
 block2 = "=0.6.2"
-objc2-foundation = { version = "=0.3.2", features = ["NSDate", "NSArray", "NSString", "NSError", "NSPredicate"] }
+objc2-foundation = { version = "=0.3.2", features = ["NSDate", "NSArray", "NSString", "NSError", "NSPredicate", "NSProcessInfo", "NSObject"] }
 objc2-event-kit = { version = "=0.3.2", features = ["EKEventStore", "EKEvent", "EKCalendarItem", "EKObject", "EKTypes", "EKCalendar", "block2"] }
 core-foundation = "0.10.1"
 core-graphics = "0.25.0"

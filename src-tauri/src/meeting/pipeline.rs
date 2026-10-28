@@ -114,6 +114,16 @@ pub struct Processed {
     pub duration_secs: f32,
     /// Voiceprints by final speaker label, only when voice memory is on.
     pub voiceprints: Voiceprints,
+    /// Seconds spent on each stage, for the local timing log.
+    pub timings: Timings,
+}
+
+/// Seconds per processing stage. Durations only, never content.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct Timings {
+    pub mic_asr: f32,
+    pub system_asr: f32,
+    pub diarize: f32,
 }
 
 /// Splits `segs` into speakers with the diarizer, naming the voices it knows. Returns the
@@ -194,6 +204,8 @@ pub fn process(
     };
     let total = (mic_len + sys_len + diar_weight).max(1) as f32;
 
+    let mut timings = Timings::default();
+    let t = std::time::Instant::now();
     let mut mic: Vec<Segment> = if mic_len > 0 {
         transcribe_file(loaded, &mic_path, |n| on_progress(n as f32 / total))?
             .into_iter()
@@ -202,6 +214,8 @@ pub fn process(
     } else {
         Vec::new()
     };
+    timings.mic_asr = t.elapsed().as_secs_f32();
+    let t = std::time::Instant::now();
     let mut system: Vec<Segment> = if sys_len > 0 {
         transcribe_file(loaded, &sys_path, |n| {
             on_progress((mic_len + n) as f32 / total)
@@ -212,6 +226,8 @@ pub fn process(
     } else {
         Vec::new()
     };
+    timings.system_asr = t.elapsed().as_secs_f32();
+    let t = std::time::Instant::now();
     let mut voiceprints = Vec::new();
     if let Some(d) = diarizer {
         if !system.is_empty() {
@@ -225,12 +241,14 @@ pub fn process(
             voiceprints = p;
         }
     }
+    timings.diarize = t.elapsed().as_secs_f32();
     on_progress(1.0);
     let duration_secs = mic_len.max(sys_len) as f32 / SAMPLE_RATE as f32;
     Ok(Processed {
         segments: merge(mic, system),
         duration_secs,
         voiceprints,
+        timings,
     })
 }
 

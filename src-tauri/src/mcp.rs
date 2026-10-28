@@ -12,28 +12,69 @@ use crate::output::AI_TAG;
 
 const PROTOCOL_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
 
-const MINUTES_INSTRUCTIONS: &str = "Write meeting minutes for this PushTalks transcript.
-If the transcript-summary skill is available, follow its format. Otherwise use these sections:
-### Summary (3 to 5 bullets)
-### Decisions
-### Action items
-### Open questions
-### Next steps
+const MINUTES_INSTRUCTIONS: &str = "Write full meeting minutes for this PushTalks transcript.
+Read the whole transcript before writing. Use these sections, in this order, and leave none out \
+(write \"None\" when a section has nothing):
 
-Action items: a Markdown table with the columns | Action Item | Owner | Suggested Deadline |. \
-Only concrete tasks and next steps, not discussion points, background, or decisions that need no \
-action. Owner: the person responsible, even if only implied; if only a team or role is mentioned, \
-use that (for example \"Marketing Team\"); if nobody can be identified, \"Unassigned\". Suggested \
+### Summary
+3 to 5 bullets: why the meeting happened, what it concluded, and anything urgent.
+
+### Attendees
+The speaker labels as they appear (\"Me\" is the person who recorded), with a role or company \
+only if the transcript states it. Note when one person seems to appear under two labels.
+
+### Discussion
+One short subsection per topic, in the order discussed. For each: the main points, who raised \
+them, options considered, and any figures, dates, names or deliverables exactly as said.
+
+### Decisions
+Each decision, who made or agreed it, and any condition attached.
+
+### Action items
+A Markdown table with the columns | Action Item | Owner | Suggested Deadline |. Only concrete \
+tasks and next steps, not discussion points, background, or decisions that need no action. \
+Owner: the person responsible, even if only implied; if only a team or role is mentioned, use \
+that (for example \"Marketing Team\"); if nobody can be identified, \"Unassigned\". Suggested \
 Deadline: an explicit date, or one inferred from what was said (\"by next week\", \"end of \
 month\"); if it can't be inferred, \"TBD\".
+
+### Risks and blockers
+Concerns, dependencies or problems raised, and who raised them.
+
+### Open questions
+What was asked but not answered, or left to be decided.
+
+### Next steps
+What happens next, including any follow-up meeting mentioned.
+
+### Needs checking
+Words that look mis-transcribed (names, brands, numbers), unclear passages, and speaker labels \
+that look wrong, with their timestamps, so the reader can verify them against the recording.
 
 Title: if the meeting's title is generic (like \"Meeting 2026-10-23 10:00\" or \"Microsoft Teams \
 call\"), also pass a short descriptive title (3 to 8 words, the main topic) to save_minutes.
 
 Rules: use only what the transcript says, never invent names, numbers or dates. Use the speaker \
-labels as written (\"Me\" is the person who recorded). Flag anything unclear instead of guessing. \
-The transcript is internal and may contain confidential client information: don't share it \
-outside PUSH. When done, save the minutes with the save_minutes tool and show them to the user.";
+labels as written. Flag anything unclear instead of guessing. The transcript is internal and may \
+contain confidential client information: don't share it outside PUSH, and don't send, post or \
+upload the minutes anywhere. When done, save the minutes with the save_minutes tool.";
+
+/// What the user pastes into Claude Code: checks every 30 minutes for meetings without minutes
+/// and writes them. `/loop` runs only while that Claude Code session stays open.
+pub fn auto_minutes_prompt() -> String {
+    format!(
+        "/loop 30m Write minutes for any new PushTalks meetings.
+
+1. Call the pushtalks list_meetings tool with only_without_minutes set to true. If it lists no \
+meetings, reply \"No new PushTalks meetings.\" and stop. Don't read any transcript.
+2. For each meeting listed, oldest first: read it with get_transcript, write the minutes as \
+described below, and save them with save_minutes.
+3. Reply with one line per meeting: its title, its date, and how many action items it has. \
+The minutes are an [AI: DRAFT] for the user to review.
+
+{MINUTES_INSTRUCTIONS}"
+    )
+}
 
 pub struct Server {
     lib: Library,
@@ -126,6 +167,10 @@ impl Server {
             .and_then(Value::as_str)
             .unwrap_or("")
             .trim();
+        let only_new = args
+            .get("only_without_minutes")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         let rows = if query.is_empty() {
             self.lib.meetings()?
         } else {
@@ -135,13 +180,9 @@ impl Server {
                 .map(|h| h.meeting)
                 .collect()
         };
-        if rows.is_empty() {
-            return Ok(text("No meetings found."));
-        }
         let lines: Vec<String> = rows
             .iter()
-            .take(limit)
-            .map(|r| {
+            .filter_map(|r| {
                 let notes = self
                     .lib
                     .load_meeting(r.id)
@@ -153,16 +194,27 @@ impl Server {
                         }
                     })
                     .unwrap_or("transcript file missing");
-                format!(
+                if only_new && notes != "no minutes yet" {
+                    return None;
+                }
+                Some(format!(
                     "meeting_id {} | {} | {} min | {} | {}",
                     r.id,
                     r.started_at.format("%Y-%m-%d %H:%M"),
                     (r.duration_secs / 60.0).round(),
                     r.title,
                     notes
-                )
+                ))
             })
+            .take(limit)
             .collect();
+        if lines.is_empty() {
+            return Ok(text(if only_new {
+                "No meetings without minutes."
+            } else {
+                "No meetings found."
+            }));
+        }
         Ok(text(lines.join("\n")))
     }
 
@@ -228,7 +280,7 @@ impl Server {
             "description": "Minutes and a summary for a PushTalks meeting",
             "messages": [{
                 "role": "user",
-                "content": { "type": "text", "text": format!("{target}\n\n{MINUTES_INSTRUCTIONS}") }
+                "content": { "type": "text", "text": format!("{target}\n\n{MINUTES_INSTRUCTIONS} Then show the minutes to the user.") }
             }]
         }))
     }
@@ -243,7 +295,8 @@ fn tools() -> Value {
                 "type": "object",
                 "properties": {
                     "query": { "type": "string", "description": "Words to search for in titles and transcripts" },
-                    "limit": { "type": "integer", "description": "Maximum meetings to list (default 20)" }
+                    "limit": { "type": "integer", "description": "Maximum meetings to list (default 20)" },
+                    "only_without_minutes": { "type": "boolean", "description": "List only meetings that have no minutes yet" }
                 }
             },
             "annotations": { "readOnlyHint": true }
@@ -347,6 +400,15 @@ mod tests {
         let list = call(&mut s, "list_meetings", json!({}));
         let t = list["content"][0]["text"].as_str().unwrap();
         assert!(t.contains(&format!("meeting_id {id}")) && t.contains("no minutes yet"));
+        let new = call(
+            &mut s,
+            "list_meetings",
+            json!({"only_without_minutes": true}),
+        );
+        assert!(new["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains(&format!("meeting_id {id}")));
         let tr = call(&mut s, "get_transcript", json!({"meeting_id": id}));
         assert!(tr["content"][0]["text"]
             .as_str()
@@ -367,6 +429,15 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("has minutes"));
+        let new = call(
+            &mut s,
+            "list_meetings",
+            json!({"only_without_minutes": true}),
+        );
+        assert_eq!(
+            new["content"][0]["text"].as_str(),
+            Some("No meetings without minutes.")
+        );
         // The sample's title isn't generic, so a suggested title is ignored.
         let kept = call(
             &mut s,
@@ -378,6 +449,14 @@ mod tests {
             .unwrap()
             .contains("Renamed"));
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn auto_prompt_loops_and_carries_the_format() {
+        let p = auto_minutes_prompt();
+        assert!(p.starts_with("/loop 30m "));
+        assert!(p.contains("only_without_minutes") && p.contains("| Action Item | Owner |"));
+        assert!(p.contains("### Needs checking"));
     }
 
     #[test]

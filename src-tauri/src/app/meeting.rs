@@ -147,32 +147,79 @@ pub fn stop(app: &AppHandle) -> Result<()> {
     Ok(())
 }
 
-/// Lowers this thread's priority so processing doesn't slow down the user's other work.
-/// ONNX Runtime's own worker threads keep normal priority (to verify in the pilot).
-fn lower_priority() {
+/// Keeps the computer at full speed and awake while a meeting is processed. Without it, macOS
+/// App Nap and Windows efficiency mode throttle the app once its window is hidden, and the
+/// computer may sleep: a 45-minute meeting then took hours instead of minutes. Fewer inference
+/// threads than cores leave room for the user's other work instead of a lowered priority.
+struct FullSpeed {
     #[cfg(target_os = "macos")]
-    // SAFETY: setpriority on the calling thread with Darwin's background constants.
-    unsafe {
-        libc::setpriority(libc::PRIO_DARWIN_THREAD, 0, libc::PRIO_DARWIN_BG);
+    activity:
+        objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn objc2::runtime::NSObjectProtocol>>,
+}
+
+impl FullSpeed {
+    fn start() -> Self {
+        #[cfg(target_os = "windows")]
+        // SAFETY: plain Win32 calls on this process and thread with a correctly sized struct.
+        unsafe {
+            use windows_sys::Win32::System::Power::{
+                SetThreadExecutionState, ES_CONTINUOUS, ES_SYSTEM_REQUIRED,
+            };
+            use windows_sys::Win32::System::Threading::{
+                GetCurrentProcess, ProcessPowerThrottling, SetProcessInformation,
+                PROCESS_POWER_THROTTLING_CURRENT_VERSION, PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
+                PROCESS_POWER_THROTTLING_STATE,
+            };
+            // Opt out of efficiency mode (EcoQoS) for the whole process.
+            let state = PROCESS_POWER_THROTTLING_STATE {
+                Version: PROCESS_POWER_THROTTLING_CURRENT_VERSION,
+                ControlMask: PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
+                StateMask: 0,
+            };
+            SetProcessInformation(
+                GetCurrentProcess(),
+                ProcessPowerThrottling,
+                &state as *const _ as *const core::ffi::c_void,
+                std::mem::size_of::<PROCESS_POWER_THROTTLING_STATE>() as u32,
+            );
+            SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED);
+        }
+        Self {
+            #[cfg(target_os = "macos")]
+            activity: objc2_foundation::NSProcessInfo::processInfo()
+                .beginActivityWithOptions_reason(
+                    objc2_foundation::NSActivityOptions::UserInitiated,
+                    &objc2_foundation::NSString::from_str("Transcribing a meeting"),
+                ),
+        }
     }
-    #[cfg(target_os = "windows")]
-    // SAFETY: GetCurrentThread returns a pseudo-handle that is always valid.
-    unsafe {
-        use windows_sys::Win32::System::Threading::{
-            GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_BELOW_NORMAL,
-        };
-        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+}
+
+impl Drop for FullSpeed {
+    fn drop(&mut self) {
+        #[cfg(target_os = "macos")]
+        // SAFETY: the token came from beginActivityWithOptions on the same NSProcessInfo.
+        unsafe {
+            objc2_foundation::NSProcessInfo::processInfo().endActivity(&self.activity);
+        }
+        #[cfg(target_os = "windows")]
+        // SAFETY: plain Win32 calls; the worker thread set these flags in `start`.
+        unsafe {
+            use windows_sys::Win32::System::Power::{SetThreadExecutionState, ES_CONTINUOUS};
+            SetThreadExecutionState(ES_CONTINUOUS);
+        }
     }
 }
 
 /// Processes queued recordings one at a time, for the app's lifetime.
 pub fn worker(app: AppHandle, rx: Receiver<PathBuf>) {
-    lower_priority();
     for dir in rx.iter() {
         let state = app.state::<AppState>();
         state.queued.lock().retain(|d| d != &dir);
         *state.processing.lock() = Some(dir.clone());
+        let full_speed = FullSpeed::start();
         let result = process(&app, &dir);
+        drop(full_speed);
         *state.processing.lock() = None;
         match result {
             Ok(id) => {
@@ -235,6 +282,7 @@ fn process(app: &AppHandle, dir: &Path) -> Result<i64> {
     )?;
     let (segments, duration) = (processed.segments, processed.duration_secs);
     drop(loaded);
+    log_timings(duration, &processed.timings, t0.elapsed().as_secs_f32());
     let meeting = Meeting {
         title: meta.title.clone(),
         started_at: meta.started_at,
@@ -276,6 +324,29 @@ fn process(app: &AppHandle, dir: &Path) -> Result<i64> {
         }
     }
     Ok(id)
+}
+
+/// Appends one line of stage durations to `processing-times.log` in the app data folder, so
+/// slow processing on a tester's PC can be measured. Durations and settings only, never content.
+fn log_timings(audio_secs: f32, t: &pipeline::Timings, total: f32) {
+    use std::io::Write;
+    let line = format!(
+        "{} v{} {} threads={} audio={:.0}s total={:.0}s mic_asr={:.0}s system_asr={:.0}s diarize={:.0}s rtf={:.2}\n",
+        Local::now().format("%Y-%m-%d %H:%M"),
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS,
+        crate::pipeline::default_threads(),
+        audio_secs,
+        total,
+        t.mic_asr,
+        t.system_asr,
+        t.diarize,
+        total / audio_secs.max(1.0),
+    );
+    let path = crate::settings::app_data_dir().join("processing-times.log");
+    if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = f.write_all(line.as_bytes());
+    }
 }
 
 /// Deletes kept audio whose retention period has passed.

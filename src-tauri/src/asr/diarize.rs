@@ -30,6 +30,15 @@ pub struct Diarizer {
     extractor: SpeakerEmbeddingExtractor,
 }
 
+/// Distance at which two voices count as different people; higher means fewer speakers.
+const CLUSTER_THRESHOLD: f32 = 0.5;
+/// Clusters with at least this much speech are treated as real speakers.
+const MAIN_SPEAKER_SECS: f32 = 20.0;
+/// Voiceprint similarity above which a fragment joins a main speaker. Below it, a fragment
+/// with enough speech stays a speaker of its own.
+const SAME_VOICE: f32 = 0.35;
+/// A fragment that matches no main speaker keeps its own label only with this much speech.
+const OWN_SPEAKER_SECS: f32 = 8.0;
 /// Up to this much of a speaker's audio goes into their voiceprint.
 const VOICEPRINT_SECS: f32 = 30.0;
 /// Speakers heard for less than this get no voiceprint (too little to be reliable).
@@ -39,6 +48,11 @@ impl Diarizer {
     /// Loads the diarization models if they're installed and match their pinned hashes.
     /// Returns Ok(None) when they aren't installed, so meetings still process without them.
     pub fn load(models_dir: &Path, threads: i32) -> Result<Option<Self>> {
+        Self::load_with(models_dir, threads, CLUSTER_THRESHOLD)
+    }
+
+    /// Like [`load`](Self::load), with an explicit clustering threshold (for tuning).
+    pub fn load_with(models_dir: &Path, threads: i32, threshold: f32) -> Result<Option<Self>> {
         for spec in [&PYANNOTE_SEGMENTATION, &TITANET_SMALL] {
             if !download::verify(spec, models_dir).is_empty() {
                 return Ok(None);
@@ -65,7 +79,10 @@ impl Diarizer {
                 num_threads: threads,
                 ..Default::default()
             },
-            clustering: FastClusteringConfig::default(),
+            clustering: FastClusteringConfig {
+                threshold,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let inner = OfflineSpeakerDiarization::create(&config)
@@ -75,8 +92,17 @@ impl Diarizer {
         Ok(Some(Self { inner, extractor }))
     }
 
-    /// Speaker turns for 16 kHz mono audio, sorted by start time.
+    /// Speaker turns for 16 kHz mono audio, sorted by start time, with fragments folded into
+    /// the main voices (see [`fold_fragments`]).
     pub fn turns(&self, samples: &[f32]) -> Result<Vec<Turn>> {
+        let raw = self.raw_turns(samples)?;
+        let prints = self.voiceprints(samples, &raw);
+        Ok(fold_fragments(raw, &prints, SAME_VOICE))
+    }
+
+    /// The clustering's own turns. On real calls it splits one person into many clusters: a
+    /// 29-minute call gave 109, of which 3 spoke for 30 s or more.
+    fn raw_turns(&self, samples: &[f32]) -> Result<Vec<Turn>> {
         let result = self
             .inner
             .process(samples)
@@ -130,6 +156,63 @@ impl Diarizer {
         }
         out
     }
+}
+
+/// Folds the clustering's small fragments into the main speakers. A fragment joins the main
+/// speaker whose voiceprint it matches best, if similar enough; otherwise it stays separate when
+/// it has enough speech (someone who spoke briefly), and each of its turns joins the nearest main
+/// speaker in time when it doesn't.
+pub fn fold_fragments(turns: Vec<Turn>, prints: &[(i32, Vec<f32>)], same_voice: f32) -> Vec<Turn> {
+    let mut totals: HashMap<i32, f32> = HashMap::new();
+    for t in &turns {
+        *totals.entry(t.speaker).or_default() += t.end - t.start;
+    }
+    let is_main = |id: i32| totals.get(&id).copied().unwrap_or(0.0) >= MAIN_SPEAKER_SECS;
+    if !totals.keys().any(|id| is_main(*id)) {
+        return turns;
+    }
+    let print = |id: i32| prints.iter().find(|(p, _)| *p == id).map(|(_, e)| e);
+    let mut target: HashMap<i32, Option<i32>> = HashMap::new();
+    for (&id, &secs) in &totals {
+        if is_main(id) {
+            continue;
+        }
+        let best = print(id).and_then(|e| {
+            totals
+                .keys()
+                .filter(|m| is_main(**m))
+                .filter_map(|m| print(*m).map(|pm| (*m, crate::voices::cosine(e, pm))))
+                .max_by(|a, b| a.1.total_cmp(&b.1))
+        });
+        target.insert(
+            id,
+            match best {
+                Some((m, sim)) if sim >= same_voice => Some(m),
+                _ if secs >= OWN_SPEAKER_SECS => Some(id),
+                // Too little speech to tell: nearest main speaker in time, per turn.
+                _ => None,
+            },
+        );
+    }
+    let mains: Vec<Turn> = turns
+        .iter()
+        .filter(|t| is_main(t.speaker))
+        .copied()
+        .collect();
+    turns
+        .iter()
+        .map(|t| {
+            let speaker = if is_main(t.speaker) {
+                t.speaker
+            } else {
+                match target.get(&t.speaker).copied().flatten() {
+                    Some(s) => s,
+                    None => speaker_at(&mains, (t.start + t.end) / 2.0).unwrap_or(t.speaker),
+                }
+            };
+            Turn { speaker, ..*t }
+        })
+        .collect()
 }
 
 /// The speaker whose turn covers time `t`, or the nearest turn if none does.
@@ -216,6 +299,73 @@ pub fn label(segments: Vec<Segment>, turns: &[Turn], known: &HashMap<i32, String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Tuning aid: speaker count and time per threshold for one WAV. Prints counts only.
+    /// `PUSHTALKS_DIAR_WAV=<file.wav> cargo test --release --lib diarize::tests::thresholds -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn thresholds() {
+        let wav = std::env::var("PUSHTALKS_DIAR_WAV").expect("set PUSHTALKS_DIAR_WAV");
+        let audio = crate::audio::resample::read_wav_16k_mono(Path::new(&wav)).unwrap();
+        let dir = crate::models::models_dir();
+        for th in [0.5, 0.7] {
+            let d = Diarizer::load_with(&dir, 4, th).unwrap().unwrap();
+            let t = std::time::Instant::now();
+            let raw = d.raw_turns(&audio).unwrap();
+            let turns = d.turns(&audio).unwrap();
+            let mut raw_ids: Vec<i32> = raw.iter().map(|t| t.speaker).collect();
+            raw_ids.sort_unstable();
+            raw_ids.dedup();
+            print!("raw {} -> ", raw_ids.len());
+            let mut ids: Vec<i32> = turns.iter().map(|t| t.speaker).collect();
+            ids.sort_unstable();
+            ids.dedup();
+            let big = ids
+                .iter()
+                .filter(|id| {
+                    turns
+                        .iter()
+                        .filter(|t| t.speaker == **id)
+                        .map(|t| t.end - t.start)
+                        .sum::<f32>()
+                        >= 30.0
+                })
+                .count();
+            println!(
+                "threshold {th}: {} speakers ({big} with 30 s or more), {:.0} s",
+                ids.len(),
+                t.elapsed().as_secs_f32()
+            );
+        }
+    }
+
+    #[test]
+    fn folds_fragments_into_main_speakers() {
+        let t = |start: f32, end: f32, speaker: i32| Turn {
+            start,
+            end,
+            speaker,
+        };
+        // 0 and 1 are main speakers. 2 sounds like 0; 3 is a distinct brief speaker with
+        // enough speech; 4 is a blip with no voiceprint, joining the nearest main turn (a tie here,
+        // which goes to the earlier one).
+        let turns = vec![
+            t(0.0, 30.0, 0),
+            t(30.0, 31.0, 4),
+            t(31.0, 60.0, 1),
+            t(60.0, 65.0, 2),
+            t(65.0, 75.0, 3),
+        ];
+        let prints = vec![
+            (0, vec![1.0, 0.0, 0.0]),
+            (1, vec![0.0, 1.0, 0.0]),
+            (2, vec![0.9, 0.1, 0.0]),
+            (3, vec![0.0, 0.0, 1.0]),
+        ];
+        let folded = fold_fragments(turns, &prints, SAME_VOICE);
+        let ids: Vec<i32> = folded.iter().map(|t| t.speaker).collect();
+        assert_eq!(ids, vec![0, 0, 1, 0, 3]);
+    }
 
     #[test]
     fn splits_segments_at_speaker_changes() {
