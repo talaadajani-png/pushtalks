@@ -18,6 +18,7 @@ vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) })
 
 import Meeting from './Meeting';
 import Library from './Library';
+import DictationView, { groupByDay } from './Dictation';
 
 const meeting = {
   row: { id: 7, title: 'Weekly sync', started_at: '2026-10-20T14:00:00Z', duration_secs: 600, md_path: '/x.md', audio_dir: null },
@@ -90,5 +91,40 @@ describe('Library transcript editor', () => {
     await user.click(await screen.findByText('Thanks Stefan.'));
     await user.keyboard('{Enter}');
     expect(calls.some((c) => c.cmd === 'meeting_update')).toBe(false);
+  });
+});
+
+describe('Dictation notes', () => {
+  const settings = { dictation_mode: 'hold', keep_dictations: 20 } as unknown as import('../api').Settings;
+  const now = new Date();
+  const earlier = new Date(now.getTime() - 3 * 86_400_000);
+  const notes = [
+    { id: 2, created_at: now.toISOString(), text: 'Send the deck to the team', duration_secs: 4 },
+    { id: 1, created_at: earlier.toISOString(), text: 'Book the review call', duration_secs: 75 },
+  ];
+
+  beforeEach(() => {
+    Object.assign(responses, { dictations_list: notes, permissions: { accessibility: true, hold_key_active: true } });
+  });
+
+  it('groups notes by day, searches them, and opens one to copy or delete', async () => {
+    const user = userEvent.setup();
+    render(<DictationView settings={settings} onChange={() => {}} />);
+    expect(await screen.findByText('Today')).toBeTruthy();
+    expect(screen.getByText('Send the deck to the team')).toBeTruthy();
+    expect(screen.getByText('1m 15s')).toBeTruthy();
+    await user.type(screen.getByPlaceholderText('Search notes'), 'review');
+    expect(screen.queryByText('Send the deck to the team')).toBeNull();
+    await user.click(screen.getByText('Book the review call'));
+    expect(screen.getByRole('button', { name: 'Copy' })).toBeTruthy();
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    await user.click(screen.getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(calls.find((c) => c.cmd === 'dictation_delete')?.args).toEqual({ id: 1 }));
+  });
+
+  it('groupByDay keeps order and filters by text', () => {
+    const groups = groupByDay(notes, '');
+    expect(groups.map(([, n]) => n.map((d) => d.id))).toEqual([[2], [1]]);
+    expect(groupByDay(notes, 'DECK')).toHaveLength(1);
   });
 });

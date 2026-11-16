@@ -167,10 +167,30 @@ pub fn fold_fragments(turns: Vec<Turn>, prints: &[(i32, Vec<f32>)], same_voice: 
     for t in &turns {
         *totals.entry(t.speaker).or_default() += t.end - t.start;
     }
-    let is_main = |id: i32| totals.get(&id).copied().unwrap_or(0.0) >= MAIN_SPEAKER_SECS;
-    if !totals.keys().any(|id| is_main(*id)) {
+    // Main speakers: 20 s of speech or more. If the clustering broke everyone into smaller
+    // pieces, the longest clusters covering half the speech (at most 10) stand in for them.
+    let mut by_len: Vec<(i32, f32)> = totals.iter().map(|(k, v)| (*k, *v)).collect();
+    by_len.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+    let mut mains: Vec<i32> = by_len
+        .iter()
+        .filter(|(_, secs)| *secs >= MAIN_SPEAKER_SECS)
+        .map(|(id, _)| *id)
+        .collect();
+    if mains.is_empty() {
+        let speech: f32 = by_len.iter().map(|(_, s)| s).sum();
+        let mut covered = 0.0;
+        for (id, secs) in by_len.iter().take(10) {
+            if covered >= speech / 2.0 {
+                break;
+            }
+            mains.push(*id);
+            covered += secs;
+        }
+    }
+    if mains.len() == totals.len() {
         return turns;
     }
+    let is_main = |id: i32| mains.contains(&id);
     let print = |id: i32| prints.iter().find(|(p, _)| *p == id).map(|(_, e)| e);
     let mut target: HashMap<i32, Option<i32>> = HashMap::new();
     for (&id, &secs) in &totals {
@@ -365,6 +385,35 @@ mod tests {
         let folded = fold_fragments(turns, &prints, SAME_VOICE);
         let ids: Vec<i32> = folded.iter().map(|t| t.speaker).collect();
         assert_eq!(ids, vec![0, 0, 1, 0, 3]);
+    }
+
+    #[test]
+    fn folds_even_when_every_cluster_is_short() {
+        let t = |start: f32, end: f32, speaker: i32| Turn {
+            start,
+            end,
+            speaker,
+        };
+        // No cluster reaches 20 s; the two longest cover half the speech and become the mains.
+        let turns = vec![
+            t(0.0, 15.0, 0),
+            t(15.0, 27.0, 1),
+            t(27.0, 30.0, 2),
+            t(30.0, 33.0, 3),
+            t(33.0, 36.0, 4),
+        ];
+        let prints = vec![
+            (0, vec![1.0, 0.0]),
+            (1, vec![0.0, 1.0]),
+            (2, vec![0.9, 0.1]),
+            (3, vec![0.1, 0.9]),
+            (4, vec![0.95, 0.05]),
+        ];
+        let ids: Vec<i32> = fold_fragments(turns, &prints, SAME_VOICE)
+            .iter()
+            .map(|t| t.speaker)
+            .collect();
+        assert_eq!(ids, vec![0, 1, 0, 1, 0]);
     }
 
     #[test]

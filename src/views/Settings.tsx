@@ -98,7 +98,7 @@ export default function SettingsView({ settings, onChange }: { settings: Setting
 
       <SpeakerNames settings={settings} onToggle={(remember_voices) => save({ remember_voices })} />
       <PermissionsSection />
-      <Claude />
+      <Claude style={settings.minutes_style} onStyle={(minutes_style) => save({ minutes_style })} />
       <Vocabulary />
       <Models settings={settings} onModel={(asr_model) => save({ asr_model })} />
 
@@ -256,13 +256,16 @@ function About() {
   );
 }
 
-function Claude() {
+function Claude({ style, onStyle }: { style: string; onStyle: (id: string) => void }) {
   const [c, setC] = useState<Connector | null>(null);
   const [copied, setCopied] = useState('');
+  // Refetched when the style changes, so the prompt below matches it.
   useEffect(() => {
     api.claudeConnector().then(setC);
-  }, []);
+  }, [style]);
   if (!c) return null;
+  const groups = [...new Set(c.minutes_styles.map((s) => s.group))];
+  const current = c.minutes_styles.find((s) => s.id === style) ?? c.minutes_styles[0];
   const copy = async (label: string, value: string) => {
     await navigator.clipboard.writeText(value);
     setCopied(label);
@@ -293,6 +296,29 @@ function Claude() {
         </div>
         <span className="faint">
           In Claude Desktop: Settings › Developer › Edit Config, add this to claude_desktop_config.json, then restart Claude.
+        </span>
+      </div>
+      <div className="stack">
+        <label className="row">
+          <b className="small">How do you like your notes?</b>
+          <span className="spacer" />
+          <select value={current.id} onChange={(e) => onStyle(e.target.value)}>
+            {groups.map((g) => (
+              <optgroup key={g} label={g}>
+                {c.minutes_styles
+                  .filter((s) => s.group === g)
+                  .map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.label}
+                    </option>
+                  ))}
+              </optgroup>
+            ))}
+          </select>
+        </label>
+        <span className="faint">
+          {current.about} Every style includes an action items table. Claude uses it for minutes from now on; copy the
+          prompt again after changing it.
         </span>
       </div>
       <div className="stack">

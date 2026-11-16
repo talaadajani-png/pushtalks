@@ -50,6 +50,10 @@ pub struct Settings {
     /// Voice memory: name known voices automatically. Off by default; voiceprints are
     /// biometric data and need approval and consent first (PRD §6.3).
     pub remember_voices: bool,
+    /// How Claude writes minutes: an id from `crate::minutes::STYLES`.
+    pub minutes_style: String,
+    /// How many dictations to keep in the Dictation tab; 0 keeps all. Default 20 (PRD §6.7).
+    pub keep_dictations: u32,
 }
 
 impl Default for Settings {
@@ -69,6 +73,8 @@ impl Default for Settings {
             launch_at_login: false,
             suggest_recording: true,
             remember_voices: false,
+            minutes_style: crate::minutes::DEFAULT_STYLE.into(),
+            keep_dictations: 20,
         }
     }
 }

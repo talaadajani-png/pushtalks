@@ -20,6 +20,8 @@ export interface Settings {
   launch_at_login: boolean;
   suggest_recording: boolean;
   remember_voices: boolean;
+  keep_dictations: number;
+  minutes_style: string;
 }
 
 export interface Word { w: string; s: number; e: number }
@@ -51,7 +53,7 @@ export interface MeetingOut {
 }
 export interface Rule { id: number; heard: string; spelling: string; mode: RuleMode }
 export interface Correction { heard: string; spelling: string; common: boolean }
-export interface Dictation { id: number; created_at: string; text: string }
+export interface Dictation { id: number; created_at: string; text: string; duration_secs: number | null }
 export interface ModelInfo {
   id: string;
   label: string;
@@ -84,7 +86,9 @@ export interface Connector {
   claude_code: string;
   claude_desktop: string;
   auto_minutes_prompt: string;
+  minutes_styles: MinutesStyle[];
 }
+export interface MinutesStyle { id: string; label: string; group: string; about: string }
 export interface MicResult { device: string; peak: number; speech: boolean; blocked: boolean }
 export interface Voice { id: number; name: string; samples: number }
 export interface AppInfo { version: string; os: string; notices: string; models_dir: string }
@@ -141,6 +145,7 @@ export const api = {
   dictations: () => invoke<Dictation[]>('dictations_list'),
   dictationUpdate: (id: number, text: string) => invoke<void>('dictation_update', { id, text }),
   dictationsClear: () => invoke<void>('dictations_clear'),
+  dictationDelete: (id: number) => invoke<void>('dictation_delete', { id }),
 };
 
 export function on<T>(event: string, handler: (payload: T) => void): () => void {

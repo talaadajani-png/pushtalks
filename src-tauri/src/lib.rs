@@ -10,6 +10,7 @@ pub mod dictation;
 pub mod mcp;
 pub mod meeting;
 pub mod metrics;
+pub mod minutes;
 pub mod models;
 pub mod output;
 pub mod pipeline;

@@ -80,7 +80,7 @@ export default function App() {
       <main className="content">
         {tab === 'meeting' && <Meeting tick={tick} onOpen={showMeeting} callRequest={callRequest} />}
         {tab === 'library' && <Library openId={openMeeting} onOpenChange={setOpenMeeting} />}
-        {tab === 'dictation' && <DictationView settings={settings} />}
+        {tab === 'dictation' && <DictationView settings={settings} onChange={setSettings} />}
         {tab === 'settings' && <SettingsView settings={settings} onChange={setSettings} />}
       </main>
     </div>

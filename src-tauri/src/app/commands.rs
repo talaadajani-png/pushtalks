@@ -72,6 +72,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<Wry>) -> bool + Send + Sync + 'st
         dictations_list,
         dictation_update,
         dictations_clear,
+        dictation_delete,
         choose_folder,
     ]
 }
@@ -119,6 +120,14 @@ fn settings_save(app: AppHandle, state: State<AppState>, settings: Settings) -> 
     if settings.asr_model != previous.asr_model {
         state.asr.unload();
         state.refresh_models_ready();
+    }
+    if settings.keep_dictations != previous.keep_dictations {
+        state
+            .lib
+            .lock()
+            .trim_dictations(settings.keep_dictations)
+            .map_err(err)?;
+        let _ = app.emit("dictations-changed", ());
     }
     Ok(settings)
 }
@@ -669,11 +678,13 @@ struct Connector {
     claude_desktop: String,
     /// Pasted into Claude Code: writes minutes for new meetings every 30 minutes.
     auto_minutes_prompt: String,
+    minutes_styles: &'static [crate::minutes::Style],
 }
 
 /// Where the Claude connector (`pushtalks-mcp`) lives and how to add it to Claude.
 #[tauri::command(async)]
-fn claude_connector() -> Res<Connector> {
+fn claude_connector(state: State<AppState>) -> Res<Connector> {
+    let style = state.settings.lock().minutes_style.clone();
     let exe = std::env::current_exe().map_err(err)?;
     let name = if cfg!(windows) {
         "pushtalks-mcp.exe"
@@ -687,7 +698,8 @@ fn claude_connector() -> Res<Connector> {
         installed: path.exists(),
         claude_code: format!("claude mcp add --scope user pushtalks -- \"{shown}\""),
         claude_desktop: serde_json::to_string_pretty(&desktop).map_err(err)?,
-        auto_minutes_prompt: crate::mcp::auto_minutes_prompt(),
+        auto_minutes_prompt: crate::minutes::auto_prompt(&style),
+        minutes_styles: crate::minutes::STYLES,
         path,
     })
 }
@@ -802,6 +814,11 @@ fn dictations_list(state: State<AppState>) -> Res<Vec<Dictation>> {
 #[tauri::command(async)]
 fn dictation_update(state: State<AppState>, id: i64, text: String) -> Res<()> {
     state.lib.lock().update_dictation(id, &text).map_err(err)
+}
+
+#[tauri::command(async)]
+fn dictation_delete(state: State<AppState>, id: i64) -> Res<()> {
+    state.lib.lock().delete_dictation(id).map_err(err)
 }
 
 #[tauri::command(async)]

@@ -135,10 +135,11 @@ pub fn run(app: AppHandle, rx: Receiver<Cmd>) {
 /// Transcribes and pastes one dictation. Runs on its own thread, never the UI thread.
 fn finish(app: AppHandle, samples: Vec<f32>) {
     let state = app.state::<AppState>();
-    let (model, fillers) = {
+    let (model, fillers, keep) = {
         let s = state.settings.lock();
-        (s.asr_model.clone(), s.remove_fillers)
+        (s.asr_model.clone(), s.remove_fillers, s.keep_dictations)
     };
+    let secs = samples.len() as f32 / SAMPLE_RATE as f32;
     let result = (|| -> anyhow::Result<Option<String>> {
         let loaded = state.asr.get(&model)?;
         let rules = state.lib.lock().rules()?;
@@ -147,7 +148,7 @@ fn finish(app: AppHandle, samples: Vec<f32>) {
     drop(samples);
     match result {
         Ok(Some(text)) => {
-            let _ = state.lib.lock().add_dictation(&text);
+            let _ = state.lib.lock().add_dictation(&text, secs, keep);
             let _ = app.emit("dictations-changed", ());
             match insert::paste(&text) {
                 Ok(()) => emit(&app, "done", None),
@@ -155,7 +156,7 @@ fn finish(app: AppHandle, samples: Vec<f32>) {
                     &app,
                     "error",
                     Some(format!(
-                        "Couldn't paste ({e}). The text is in Recent dictations."
+                        "Couldn't paste ({e}). The text is in Dictation notes."
                     )),
                 ),
             }

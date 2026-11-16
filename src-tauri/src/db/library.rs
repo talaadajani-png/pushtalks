@@ -12,9 +12,6 @@ use crate::output::{self, Meeting};
 use crate::vocab::{rules, Rule, RuleMode};
 use crate::voices::{self, Voice};
 
-/// How many recent dictations to keep for after-the-fact correction.
-const DICTATION_HISTORY: i64 = 20;
-
 pub struct Library {
     conn: Connection,
 }
@@ -42,6 +39,8 @@ pub struct Dictation {
     pub id: i64,
     pub created_at: DateTime<Local>,
     pub text: String,
+    /// How long the user spoke, in seconds. None for dictations saved before 0.1.1.
+    pub duration_secs: Option<f32>,
 }
 
 const SCHEMA: &str = "
@@ -120,6 +119,13 @@ impl Library {
     fn init(conn: Connection) -> Result<Self> {
         conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;")?;
         conn.execute_batch(SCHEMA)?;
+        // Added in 0.1.1; older libraries lack the column.
+        let has_duration = conn
+            .prepare("SELECT 1 FROM pragma_table_info('dictations') WHERE name = 'duration_secs'")?
+            .exists([])?;
+        if !has_duration {
+            conn.execute_batch("ALTER TABLE dictations ADD COLUMN duration_secs REAL")?;
+        }
         Ok(Self { conn })
     }
 
@@ -387,29 +393,45 @@ impl Library {
 
     // ---- Dictation history ----
 
-    pub fn add_dictation(&self, text: &str) -> Result<i64> {
+    /// Saves a dictation, then keeps only the newest `keep` (0 keeps all).
+    pub fn add_dictation(&self, text: &str, duration_secs: f32, keep: u32) -> Result<i64> {
         self.conn.execute(
-            "INSERT INTO dictations (created_at, text) VALUES (?1, ?2)",
-            params![Local::now().to_rfc3339(), text],
+            "INSERT INTO dictations (created_at, text, duration_secs) VALUES (?1, ?2, ?3)",
+            params![Local::now().to_rfc3339(), text, duration_secs],
         )?;
         let id = self.conn.last_insert_rowid();
-        self.conn.execute(
-            "DELETE FROM dictations WHERE id NOT IN (SELECT id FROM dictations ORDER BY id DESC LIMIT ?1)",
-            [DICTATION_HISTORY],
-        )?;
+        self.trim_dictations(keep)?;
         Ok(id)
     }
 
+    /// Keeps only the newest `keep` dictations (0 keeps all).
+    pub fn trim_dictations(&self, keep: u32) -> Result<()> {
+        if keep > 0 {
+            self.conn.execute(
+                "DELETE FROM dictations WHERE id NOT IN (SELECT id FROM dictations ORDER BY id DESC LIMIT ?1)",
+                [keep],
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn delete_dictation(&self, id: i64) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM dictations WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
     pub fn dictations(&self) -> Result<Vec<Dictation>> {
-        let mut st = self
-            .conn
-            .prepare("SELECT id, created_at, text FROM dictations ORDER BY id DESC")?;
+        let mut st = self.conn.prepare(
+            "SELECT id, created_at, text, duration_secs FROM dictations ORDER BY id DESC",
+        )?;
         let rows = st
             .query_map([], |r| {
                 Ok(Dictation {
                     id: r.get(0)?,
                     created_at: parse_time(r.get(1)?),
                     text: r.get(2)?,
+                    duration_secs: r.get(3)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -674,12 +696,35 @@ mod tests {
     fn keeps_a_short_dictation_history() {
         let lib = Library::in_memory().unwrap();
         for i in 0..25 {
-            lib.add_dictation(&format!("d{i}")).unwrap();
+            lib.add_dictation(&format!("d{i}"), 2.5, 20).unwrap();
         }
         let d = lib.dictations().unwrap();
         assert_eq!(d.len(), 20);
         assert_eq!(d[0].text, "d24");
+        assert_eq!(d[0].duration_secs, Some(2.5));
         lib.update_dictation(d[0].id, "fixed").unwrap();
         assert_eq!(lib.dictations().unwrap()[0].text, "fixed");
+        lib.delete_dictation(d[0].id).unwrap();
+        assert_eq!(lib.dictations().unwrap().len(), 19);
+        // 0 keeps everything.
+        for i in 0..5 {
+            lib.add_dictation(&format!("e{i}"), 1.0, 0).unwrap();
+        }
+        assert_eq!(lib.dictations().unwrap().len(), 24);
+        lib.trim_dictations(3).unwrap();
+        assert_eq!(lib.dictations().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn adds_the_duration_column_to_an_old_library() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE dictations (id INTEGER PRIMARY KEY, created_at TEXT NOT NULL, text TEXT NOT NULL);
+             INSERT INTO dictations (created_at, text) VALUES ('2026-10-01T09:00:00+00:00', 'old');",
+        )
+        .unwrap();
+        let lib = Library::init(conn).unwrap();
+        let d = lib.dictations().unwrap();
+        assert_eq!((d[0].text.as_str(), d[0].duration_secs), ("old", None));
     }
 }

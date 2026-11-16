@@ -346,3 +346,41 @@ pre.notices { white-space: pre-wrap; font-size: 11px; color: var(--muted); max-h
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.14); border-radius: 99px; border: 3px solid transparent; background-clip: padding-box; }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* Dictation notes: day groups of cards that open to the full text (after SpeakType's History). */
+.overline { margin: 6px 2px 0; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); }
+.note-day { gap: 8px; }
+.note-card {
+  background: var(--glass);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  transition: border-color 0.15s, background 0.15s;
+}
+.note-card:hover { background: var(--glass-strong); }
+.note-card.open { border-color: var(--edge-bright); }
+.note-head {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px 12px;
+  width: 100%;
+  padding: 12px 14px;
+  text-align: left;
+  background: none;
+  border: 0;
+  box-shadow: none;
+  border-radius: var(--radius-sm);
+}
+.note-head:hover:not(:disabled) { background: none; }
+.note-preview {
+  grid-column: 1;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.note-meta { grid-column: 1; display: flex; gap: 14px; }
+.chev { grid-column: 2; grid-row: 1 / span 2; align-self: start; color: var(--faint); transition: transform 0.2s; }
+.chev.up { transform: rotate(180deg); }
+.note-body { padding: 0 14px 14px; }
+.note-text { margin: 0; white-space: pre-wrap; user-select: text; font-size: 15px; line-height: 1.55; }
+button.danger { color: var(--danger); }

@@ -654,12 +654,30 @@ The full desktop app (Phases 1 to 3 scope) is built as a **draft for review**. N
   - otherwise joins the nearest main speaker in time.
 - **Measured:** the same call now gives 6 speakers. The true number of people on that call is not yet confirmed. Folding adds under 1 s to processing.
 - **Not verified:** the thresholds were tuned on one call, so check them against more meetings with known attendee counts.
+- **Fallback (2026-11-10):** when no cluster reaches 20 s, the longest clusters that together cover half the speech (at most 10) count as main speakers. Before this, such meetings kept every fragment. The fallback is unit-tested only, because the kept recordings had passed their retention period.
+- **Reports after the fix:** about 100 speakers per meeting, on Mac and Windows. The Mac was still running 0.1.0, because the fixed build hadn't been installed; it now runs 0.1.1. Which Windows version produced its report is not yet confirmed.
 
 **Automatic minutes prompt (2026-10-28):**
 - Settings > Use with Claude now offers a copyable prompt for Claude Code. It starts with `/loop 30m`, so every 30 minutes Claude checks for meetings without minutes and writes them.
 - The check is cheap: `list_meetings` takes `only_without_minutes`, and no transcript is read when nothing is new.
 - **Fuller minutes format** (also used by the one-off `meeting_minutes` prompt): Summary, Attendees, Discussion by topic, Decisions, Action items table, Risks and blockers, Open questions, Next steps, Needs checking.
 - **Limits:** it runs only while that Claude Code session stays open. Sending transcripts to Claude is cloud AI use and needs the supervisor's approval for client meetings (§17).
+
+**Minutes styles (2026-11-10):**
+- Settings > Use with Claude asks "How do you like your notes?". The chosen style is used by the one-off `meeting_minutes` prompt, read fresh from preferences each time, and by the copyable 30-minute prompt.
+- **Meeting formats:** Full minutes (default), Quick summary, Action items only, Client recap.
+  - The Client recap leaves out internal remarks.
+  - It ends with an internal "Before sending" checklist, to be deleted before a person sends it.
+- **Note-taking methods** (from Goodnotes' guide to note-taking methods): Outline, Cornell, Boxing, Charting, Mapping, Zettelkasten, Mind map.
+- Every style keeps the action items table and the "Needs checking" list. The Client recap has its "Before sending" list instead.
+- **Mind map** uses a Mermaid code block plus the same map as a nested list. The Library shows notes as plain text, so the diagram renders only in Markdown viewers that support Mermaid.
+- **Not verified:** how well Claude follows each layout on a real transcript.
+
+**Dictation notes (2026-11-10):**
+- The Dictation tab's list became "Dictation notes", modelled on SpeakType's History screen (MIT; the idea was borrowed, no code copied). Notes are grouped by day (Today, Yesterday, then dates) and searchable.
+- Each card shows a 2-line preview, the time, the word count and how long the user spoke. Opening a card shows the full text with Copy, "Fix a word" (the existing learn-the-spelling flow) and Delete. Clear all stays.
+- **Retention:** the default is still the last 20, as in §6.7. A picker offers the last 200 or all. Lowering it asks first, then deletes the older notes. Keeping dictations longer is a retention choice: **the pilot default needs the supervisor's approval** before it changes.
+- The library gains a `duration_secs` column for dictations, added automatically to existing libraries. Dictations saved before 0.1.1 show no length.
 
 **Automatic meeting titles (2026-10-23):**
 - **At recording start (and again at Stop, if still unnamed):** PushTalks takes the title from the meeting window or, failing that, the Mac calendar event happening now. A typed title always wins.
