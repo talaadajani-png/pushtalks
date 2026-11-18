@@ -686,6 +686,13 @@ The full desktop app (Phases 1 to 3 scope) is built as a **draft for review**. N
 - **Not adopted:** the 2026-11-07 export. It hasn't been benchmarked on PUSH audio; adopting it would need the same comparison as §18.
 - This reinforces §7.3's optional item: hosting model files internally would remove the dependency on upstream keeping old files available.
 
+**Windows computer audio fix (2026-11-18, v0.1.3):**
+- **Problem:** on a Windows 11 laptop playing a call through its built-in speakers, the "Others (computer audio)" meter never moved and no computer audio was recorded. No error was shown.
+- **Likely cause:** cpal 0.18's default output device is a virtual "follow the default" endpoint, opened with `ActivateAudioInterfaceAsync`. PushTalks ran WASAPI loopback on that endpoint. Loopback on the real speaker endpoint is the path Microsoft documents.
+- **Fix:** PushTalks now finds the current default speakers as a concrete device and records loopback from it, falling back to the old path only if that lookup fails. The recording names the device it used.
+- **Not yet verified on Windows.** It compiles in the Windows CI build; the meter test on the laptop is the check. If it still records nothing, the next step is a diagnostic build that logs which device opened and whether any audio packets arrived.
+- **Known limit, unchanged:** PushTalks records the device that was default when recording started. A call app playing to a different device (for example a headset set only as the "communications" device), or switching devices mid-call, is not captured.
+
 **Automatic meeting titles (2026-10-23):**
 - **At recording start (and again at Stop, if still unnamed):** PushTalks takes the title from the meeting window or, failing that, the Mac calendar event happening now. A typed title always wins.
   - Teams meeting windows are used; Teams navigation windows ("Chat | …", "Calendar | …") are ignored.

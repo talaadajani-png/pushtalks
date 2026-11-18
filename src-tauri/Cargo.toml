@@ -1,6 +1,6 @@
 [package]
 name = "pushtalks"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 description = "PushTalks: local-first dictation and meeting transcription for PUSH Media"
 publish = false
