@@ -18,16 +18,35 @@ pub struct ModelSpec {
     pub id: &'static str,
     pub label: &'static str,
     pub license: &'static str,
-    pub url: &'static str,
-    /// SHA-256 of the download itself (archive or single file).
-    pub download_sha256: &'static str,
-    pub download_size: u64,
-    /// For archives: the folder inside the archive that holds `files`.
-    pub archive_root: Option<&'static str>,
+    pub source: Source,
     pub files: &'static [ModelFile],
 }
 
+/// How a model's files are fetched.
+#[derive(Debug, Clone, Copy)]
+pub enum Source {
+    /// One download (an archive or a single file), checked against its own SHA-256.
+    Download {
+        url: &'static str,
+        sha256: &'static str,
+        size: u64,
+        /// For archives: the folder inside the archive that holds `files`.
+        archive_root: Option<&'static str>,
+    },
+    /// Each file fetched from `{base_url}/{name}` and checked against its pinned hash.
+    /// `base_url` must name a fixed revision (a commit), never a branch.
+    Files { base_url: &'static str },
+}
+
 impl ModelSpec {
+    /// Bytes to download when nothing is installed yet.
+    pub fn download_size(&self) -> u64 {
+        match self.source {
+            Source::Download { size, .. } => size,
+            Source::Files { .. } => self.installed_size(),
+        }
+    }
+
     /// The folder this model is installed into.
     pub fn install_dir(&self, models_dir: &Path) -> PathBuf {
         models_dir.join(self.id)
@@ -44,15 +63,16 @@ impl ModelSpec {
 
 /// NVIDIA Parakeet TDT 0.6B v3 (multilingual), int8 ONNX export packaged by k2-fsa/sherpa-onnx.
 /// Optional since 2026-10-21: installed only on request (`fetch-models --model v3`).
-/// Release asset `asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2` (2025-08-16).
+/// Files from Hugging Face `csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8` at commit
+/// 2bda32e (2025-08-16), the export we validated. Upstream replaced the GitHub release archive
+/// with a new export on 2026-11-07, so we no longer download that archive.
 pub const PARAKEET_V3_INT8: ModelSpec = ModelSpec {
     id: "parakeet-tdt-0.6b-v3-int8",
     label: "NVIDIA Parakeet TDT 0.6B v3 (int8)",
     license: "CC BY 4.0 (NVIDIA); ONNX export by k2-fsa/sherpa-onnx",
-    url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2",
-    download_sha256: "5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf",
-    download_size: 487_170_055,
-    archive_root: Some("sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8"),
+    source: Source::Files {
+        base_url: "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/2bda32ec70b097a55adaa07d9a7173915b43cc78",
+    },
     files: PARAKEET_FILES,
 };
 
@@ -61,10 +81,12 @@ pub const SILERO_VAD: ModelSpec = ModelSpec {
     id: "silero-vad",
     label: "Silero VAD",
     license: "MIT",
-    url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx",
-    download_sha256: "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6",
-    download_size: 643_854,
-    archive_root: None,
+    source: Source::Download {
+        url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx",
+        sha256: "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6",
+        size: 643_854,
+        archive_root: None,
+    },
     files: &[ModelFile {
         name: "silero_vad.onnx",
         sha256: "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6",
@@ -72,7 +94,7 @@ pub const SILERO_VAD: ModelSpec = ModelSpec {
     }],
 };
 
-// Per-file hashes of the extracted Parakeet files, pinned from the verified archive above.
+// Per-file hashes of the v3 Parakeet files, pinned from the verified 2025-08-16 archive.
 const PARAKEET_FILES: &[ModelFile] = &[
     ModelFile {
         name: "encoder.int8.onnx",
@@ -114,10 +136,12 @@ pub const PYANNOTE_SEGMENTATION: ModelSpec = ModelSpec {
     id: "pyannote-segmentation-3-0",
     label: "pyannote segmentation 3.0",
     license: "MIT (CNRS); ONNX export by k2-fsa/sherpa-onnx",
-    url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2",
-    download_sha256: "24615ee884c897d9d2ba09bb4d30da6bb1b15e685065962db5b02e76e4996488",
-    download_size: 6_958_444,
-    archive_root: Some("sherpa-onnx-pyannote-segmentation-3-0"),
+    source: Source::Download {
+        url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2",
+        sha256: "24615ee884c897d9d2ba09bb4d30da6bb1b15e685065962db5b02e76e4996488",
+        size: 6_958_444,
+        archive_root: Some("sherpa-onnx-pyannote-segmentation-3-0"),
+    },
     files: &[ModelFile {
         name: "model.onnx",
         sha256: "220ad67ca923bef2fa91f2390c786097bf305bceb5e261d4af67b38e938e1079",
@@ -131,10 +155,12 @@ pub const TITANET_SMALL: ModelSpec = ModelSpec {
     id: "titanet-small",
     label: "NVIDIA TitaNet small (speaker embeddings)",
     license: "CC BY 4.0 (NVIDIA); ONNX export by k2-fsa/sherpa-onnx",
-    url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/nemo_en_titanet_small.onnx",
-    download_sha256: "ad4a1802485d8b34c722d2a9d04249662f2ece5d28a7a039063ca22f515a789e",
-    download_size: 40_257_283,
-    archive_root: None,
+    source: Source::Download {
+        url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/nemo_en_titanet_small.onnx",
+        sha256: "ad4a1802485d8b34c722d2a9d04249662f2ece5d28a7a039063ca22f515a789e",
+        size: 40_257_283,
+        archive_root: None,
+    },
     files: &[ModelFile {
         name: "nemo_en_titanet_small.onnx",
         sha256: "ad4a1802485d8b34c722d2a9d04249662f2ece5d28a7a039063ca22f515a789e",
@@ -143,16 +169,17 @@ pub const TITANET_SMALL: ModelSpec = ModelSpec {
 };
 
 /// NVIDIA Parakeet TDT 0.6B v2 (English-only), int8 ONNX export by k2-fsa/sherpa-onnx.
-/// Release asset `asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2` (2025-08-16).
-/// The default speech model (PRD §7.1).
+/// The default speech model (PRD §7.1). Files from Hugging Face
+/// `csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8` at commit 1ab9323 (2025-08-16), the
+/// export we benchmarked. Upstream replaced the GitHub release archive with a new export on
+/// 2026-11-07 (different encoder, decoder and joiner), so we no longer download that archive.
 pub const PARAKEET_V2_INT8: ModelSpec = ModelSpec {
     id: "parakeet-tdt-0.6b-v2-int8",
     label: "NVIDIA Parakeet TDT 0.6B v2, English-only (int8)",
     license: "CC BY 4.0 (NVIDIA); ONNX export by k2-fsa/sherpa-onnx",
-    url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2",
-    download_sha256: "157c157bc51155e03e37d2466522a3a737dd9c72bb25f36eb18912964161e1ad",
-    download_size: 482_468_385,
-    archive_root: Some("sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8"),
+    source: Source::Files {
+        base_url: "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8/resolve/1ab9323565ddb038682214b292f588070a538ce2",
+    },
     files: &[
         ModelFile {
             name: "encoder.int8.onnx",
@@ -207,8 +234,22 @@ mod tests {
     #[test]
     fn every_file_is_pinned() {
         for m in ALL_MODELS.iter().chain(ASR_MODELS) {
-            assert_eq!(m.download_sha256.len(), 64, "{} download hash", m.id);
-            assert!(m.url.starts_with("https://"), "{} url", m.id);
+            match m.source {
+                Source::Download { url, sha256, .. } => {
+                    assert_eq!(sha256.len(), 64, "{} download hash", m.id);
+                    assert!(url.starts_with("https://"), "{} url", m.id);
+                }
+                Source::Files { base_url } => {
+                    assert!(base_url.starts_with("https://"), "{} url", m.id);
+                    // Pinned to a 40-character commit, not a branch that can change.
+                    let rev = base_url.rsplit('/').next().unwrap_or("");
+                    assert!(
+                        rev.len() == 40 && rev.chars().all(|c| c.is_ascii_hexdigit()),
+                        "{} must pin a commit",
+                        m.id
+                    );
+                }
+            }
             for f in m.files {
                 assert_eq!(f.sha256.len(), 64, "{}/{} hash", m.id, f.name);
                 assert!(f.sha256.chars().all(|c| c.is_ascii_hexdigit()));

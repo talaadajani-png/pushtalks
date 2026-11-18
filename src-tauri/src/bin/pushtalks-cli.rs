@@ -71,7 +71,7 @@ fn main() -> Result<()> {
                 eprintln!(
                     "{} ({:.0} MB download)",
                     spec.label,
-                    spec.download_size as f64 / 1e6
+                    spec.download_size() as f64 / 1e6
                 );
                 download::install(spec, &dir, |p| {
                     eprint!(

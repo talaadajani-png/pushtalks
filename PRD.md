@@ -679,6 +679,13 @@ The full desktop app (Phases 1 to 3 scope) is built as a **draft for review**. N
 - **Retention:** the default is still the last 20, as in §6.7. A picker offers the last 200 or all. Lowering it asks first, then deletes the older notes. Keeping dictations longer is a retention choice: **the pilot default needs the supervisor's approval** before it changes.
 - The library gains a `duration_secs` column for dictations, added automatically to existing libraries. Dictations saved before 0.1.1 show no length.
 
+**Model download fix (2026-11-18, v0.1.2):**
+- **Problem:** fresh installs failed with "parakeet-tdt-0.6b-v2-int8: downloaded file failed its SHA-256 check". On 2026-11-07 the sherpa-onnx maintainer replaced the GitHub release archives for Parakeet v2 and v3 with a new export: different encoder, decoder and joiner, and a different size. PushTalks refused the new files, as §7.3 requires. Installs that already had the models were not affected.
+- **Fix:** both Parakeet models now download as individual files from Hugging Face (`csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8` at commit 1ab9323, v3 at commit 2bda32e). Those are the same 2025-08-16 files we benchmarked, with the same pinned SHA-256s, so accuracy is unchanged. Each URL names a fixed commit, enforced by a test. Silero VAD, pyannote and TitaNet are unchanged upstream and still come from GitHub.
+- **Verified:** a fresh install of all required models into an empty folder downloaded and passed every check, and the new files transcribed the model's public sample clip correctly.
+- **Not adopted:** the 2026-11-07 export. It hasn't been benchmarked on PUSH audio; adopting it would need the same comparison as §18.
+- This reinforces §7.3's optional item: hosting model files internally would remove the dependency on upstream keeping old files available.
+
 **Automatic meeting titles (2026-10-23):**
 - **At recording start (and again at Stop, if still unnamed):** PushTalks takes the title from the meeting window or, failing that, the Mac calendar event happening now. A typed title always wins.
   - Teams meeting windows are used; Teams navigation windows ("Chat | …", "Calendar | …") are ignored.

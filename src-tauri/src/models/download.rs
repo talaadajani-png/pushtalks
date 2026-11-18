@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, bail, Context, Result};
 use sha2::{Digest, Sha256};
 
-use super::manifest::{ModelFile, ModelSpec};
+use super::manifest::{ModelFile, ModelSpec, Source};
 
 /// Progress for one download: bytes received so far out of `total`.
 #[derive(Debug, Clone, Copy)]
@@ -78,29 +78,62 @@ pub fn install(
     }
     let staging = models_dir.join(".download");
     fs::create_dir_all(&staging)?;
-    let download = staging.join(format!("{}.download", spec.id));
-
-    let have = fs::metadata(&download).map(|m| m.len()).unwrap_or(0);
-    let complete = have == spec.download_size && sha256_file(&download)? == spec.download_sha256;
-    if !complete {
-        fetch(spec.url, &download, spec.download_size, &mut on_progress)?;
-        let actual = sha256_file(&download)?;
-        if actual != spec.download_sha256 {
-            fs::remove_file(&download).ok();
-            bail!("{}: downloaded file failed its SHA-256 check", spec.id);
-        }
-    }
-
     let dest = spec.install_dir(models_dir);
     fs::create_dir_all(&dest)?;
-    match spec.archive_root {
-        Some(root) => extract(&download, root, spec.files, &dest)?,
-        None => {
-            let only = spec
-                .files
-                .first()
-                .ok_or_else(|| anyhow!("{}: no files listed", spec.id))?;
-            fs::copy(&download, dest.join(only.name))?;
+
+    let mut downloaded = None;
+    match spec.source {
+        Source::Download {
+            url,
+            sha256,
+            size,
+            archive_root,
+        } => {
+            let download = staging.join(format!("{}.download", spec.id));
+            let have = fs::metadata(&download).map(|m| m.len()).unwrap_or(0);
+            let complete = have == size && sha256_file(&download)? == sha256;
+            if !complete {
+                fetch(url, &download, size, &mut on_progress)?;
+                if sha256_file(&download)? != sha256 {
+                    fs::remove_file(&download).ok();
+                    bail!("{}: downloaded file failed its SHA-256 check", spec.id);
+                }
+            }
+            match archive_root {
+                Some(root) => extract(&download, root, spec.files, &dest)?,
+                None => {
+                    let only = spec
+                        .files
+                        .first()
+                        .ok_or_else(|| anyhow!("{}: no files listed", spec.id))?;
+                    fs::copy(&download, dest.join(only.name))?;
+                }
+            }
+            downloaded = Some(download);
+        }
+        Source::Files { base_url } => {
+            let total = spec.installed_size();
+            let mut done = 0u64;
+            for f in spec.files {
+                let out = dest.join(f.name);
+                if check_file(&out, f).is_ok() {
+                    done += f.size;
+                    continue;
+                }
+                let part = staging.join(format!("{}-{}.download", spec.id, f.name));
+                fetch(&format!("{base_url}/{}", f.name), &part, f.size, &mut |p| {
+                    on_progress(Progress {
+                        received: done + p.received,
+                        total,
+                    })
+                })?;
+                if let Err(e) = check_file(&part, f) {
+                    fs::remove_file(&part).ok();
+                    bail!("{}: {} failed its check ({e})", spec.id, f.name);
+                }
+                fs::rename(&part, &out)?;
+                done += f.size;
+            }
         }
     }
 
@@ -112,7 +145,9 @@ pub fn install(
             problems.join("; ")
         );
     }
-    fs::remove_file(&download).ok();
+    if let Some(download) = downloaded {
+        fs::remove_file(&download).ok();
+    }
     Ok(())
 }
 

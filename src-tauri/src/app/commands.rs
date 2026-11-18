@@ -249,7 +249,7 @@ async fn models_status(state: State<'_, AppState>) -> Res<Vec<ModelOut>> {
                 label: m.label,
                 license: m.license,
                 size: m.installed_size(),
-                download_size: m.download_size,
+                download_size: m.download_size(),
                 installed: download::verify(m, &dir).is_empty(),
                 required: models::ALL_MODELS.iter().any(|x| x.id == m.id) || Some(m.id) == selected,
             })
